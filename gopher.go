@@ -7,20 +7,20 @@ import(
 )
 
 const(
-	SQUARE_SIZE			float64		=	50.0
-	SQUARE_PADDING		float64		=	10.0	
-	PIECE_FONT_FACTOR	float64		=	1.5
-	PIECE_TOP_FACTOR	float64		=	3.0
-	WHITE_PIECE_COLOR 	string 		=	"#00ff00"
-	BLACK_PIECE_COLOR	string 		=	"#ff0000"
-	LIGHT_SQUARE_COLOR	string 		=	"#afafaf"
-	DARK_SQUARE_COLOR	string 		=	"#dfdfdf"
-	SQUARE_Z_INDEX		string 		=	"100"
-	PIECE_Z_INDEX		string 		=	"200"
+	SQUARE_SIZE					float64		=	50.0
+	SQUARE_PADDING				float64		=	4.0	
+	PIECE_FONT_FACTOR			float64		=	1.5
+	PIECE_TOP_FACTOR			float64		=	3.0	
+	LIGHT_SQUARE_COLOR			string 		=	"#ffffff"
+	DARK_SQUARE_COLOR			string 		=	"#bfbfbf"
+	SQUARE_Z_INDEX				string 		=	"100"
+	PIECE_Z_INDEX				string 		=	"200"
+	SQUARE_OPACITY				string 		=	"0.2"
+	BOARD_MARGIN				float64		=	10.0
 )
 
 var(
-	scalefactor		float64		=	1.0
+	scalefactor		float64		=	1.2
 
 	flip 			int 		=	0
 
@@ -38,6 +38,10 @@ var(
 	draggedid		string	
 
 	HALF_SQUARE_SIZE_SCREENVECTOR	ScreenVector 	=	ScreenVector{HALF_SQUARE_SIZE,HALF_SQUARE_SIZE}
+
+	PIECE_OPACITIES 		[2]string 	=	[2]string{"1.0","0.7"}
+	PIECE_FILL_COLORS	 	[2]string 	=	[2]string{"#000000","#ffffff"}
+	PIECE_STROKE_COLORS 	[2]string 	=	[2]string{"#ffffff","#afafaf"}
 )
 
 func Root() *js.Object {
@@ -199,37 +203,37 @@ func PieceDragStartHandler(event *js.Object) {
 }
 
 func BoardMouseUpHandler(event *js.Object) {			
-	dragunderway = false	
+	if dragunderway {
+		dragunderway = false	
 
-	dsq := rb.ScaledScreenVectorToSquare(dragd.Correct(HALF_SQUARE_SIZE_SCREENVECTOR.Scaled()))
+		dsq := rb.ScaledScreenVectorToSquare(dragd.Correct(HALF_SQUARE_SIZE_SCREENVECTOR.Scaled()))
 
-	fromalgeb := IdPart(draggedid, 1)
+		fromalgeb := IdPart(draggedid, 1)
 
-	fromsqorig := rb.Rot(SquareFromAlgeb(fromalgeb),flip)
+		fromsqorig := rb.Rot(SquareFromAlgeb(fromalgeb),flip)
 
-	tosq := rb.Rot(fromsqorig.Plus(dsq),-flip)
+		tosq := rb.Rot(fromsqorig.Plus(dsq),-flip)
 
-	toalgeb := tosq.Toalgeb()
+		toalgeb := tosq.Toalgeb()
 
-	algeb := fromalgeb + toalgeb
+		algeb := fromalgeb + toalgeb
 
-	m := MoveFromAlgeb(algeb)
+		m := MoveFromAlgeb(algeb)
 
-	rb.MakeMove(m)
+		rb.MakeMove(m)
 
-	println(m.Toalgeb())
+		dsv := rb.SquareToScaledScreenVector(dsq)
 
-	dsv := rb.SquareToScaledScreenVector(dsq)
+		nsv := dragstartst.Plus(dsv)
 
-	nsv := dragstartst.Plus(dsv)
+		st := NewStyleFromId(draggedid)
 
-	st := NewStyleFromId(draggedid)
+		st.SetTopLeft(nsv)
 
-	st.SetTopLeft(nsv)
+		SetStyleOfId(draggedid,*st)
 
-	SetStyleOfId(draggedid,*st)
-
-	DrawBoard()
+		DrawBoard()
+	}
 }
 
 func BoardMouseMoveHandler(event *js.Object) {		
@@ -261,6 +265,17 @@ func ResetButtonHandler(event *js.Object) {
 	DrawBoard()
 }
 
+
+func GrowButtonHandler(event *js.Object) {			
+	scalefactor*=1.1
+	DrawBoard()
+}
+
+func ShrinkButtonHandler(event *js.Object) {			
+	scalefactor/=1.1
+	DrawBoard()
+}
+
 func (rb RawBoard) ScreenVectorToSquare(sv ScreenVector) Square {
 	f := int(sv.X / SQUARE_SIZE)
 	r := int(sv.Y / SQUARE_SIZE)
@@ -282,17 +297,24 @@ func (rb RawBoard) SquareToScaledScreenVector(sq Square) ScreenVector {
 }
 
 func (rb RawBoard) Js() *js.Object {
+	containerdiv := CreateDiv("boardcontainer")	
+	st := NewStyle("position:relative;background:url(assets/images/backgrounds/wood.jpg);")
+	st.Set("width",Scaledpx(float64(rb.Numfiles)*SQUARE_SIZE+2.0*BOARD_MARGIN))
+	st.Set("height",Scaledpx(float64(rb.Numranks)*SQUARE_SIZE+2.0*BOARD_MARGIN))
+	containerdiv.Set("style",st.Report())
 	div := CreateDiv("board")	
 	div.Call("addEventListener", "mouseup", BoardMouseUpHandler)
 	div.Call("addEventListener", "mousemove", BoardMouseMoveHandler)
-	st := NewStyle("position:relative; background-color: #00ff00;")
+	st = NewStyle("position:absolute;background:url(assets/images/backgrounds/wood.jpg);")
 	st.Set("width",Scaledpx(float64(rb.Numfiles)*SQUARE_SIZE))
 	st.Set("height",Scaledpx(float64(rb.Numranks)*SQUARE_SIZE))
+	st.Set("top",Scaledpx(BOARD_MARGIN))
+	st.Set("left",Scaledpx(BOARD_MARGIN))
 	div.Set("style",st.Report())
 	for nf := 0 ; nf < rb.Numfiles ; nf++ {
 		for nr := 0 ; nr < rb.Numranks ; nr++ {
 			bcol := LIGHT_SQUARE_COLOR			
-			if ((nr+nf)%2)==0 {
+			if ((nr+nf)%2)==1 {
 				bcol = DARK_SQUARE_COLOR			
 			}			
 			sq := SquareFromFileRank(nf,nr)
@@ -300,16 +322,20 @@ func (rb RawBoard) Js() *js.Object {
 			rotsq := rb.Rot(sq,flip)
 			f := rotsq.File
 			r := rotsq.Rank
+
 			squarediv := CreateDiv("square_" + algeb)			
 			style := NewStyle("position:absolute;")			
 			style.Set("z-index",SQUARE_Z_INDEX)
 			style.Set("width",Scaledpx(SQUARE_SIZE))
 			style.Set("height",Scaledpx(SQUARE_SIZE))
 			style.Set("background-color",bcol)
+			style.Set("opacity",SQUARE_OPACITY)
 			style.Set("top",Scaledpx(float64(r)*SQUARE_SIZE))
 			style.Set("left",Scaledpx(float64(f)*SQUARE_SIZE))
 			squarediv.Set("style",style.Report())
 			div.Call("appendChild",squarediv)
+
+			p := rb.PieceAtFileRank(nf,nr)
 			piecediv := CreateDiv("piece_" + algeb)
 			piecediv.Set("draggable","true")
 			piecediv.Call("addEventListener","dragstart",PieceDragStartHandler)			
@@ -320,26 +346,22 @@ func (rb RawBoard) Js() *js.Object {
 			style.Set("height",Scaledpx(PIECE_SIZE))
 			style.Set("top",Scaledpx(float64(r)*SQUARE_SIZE+SQUARE_PADDING))
 			style.Set("left",Scaledpx(float64(f)*SQUARE_SIZE+SQUARE_PADDING))
-			bcol = WHITE_PIECE_COLOR
-			p := rb.PieceAtFileRank(nf,nr)
-			if p.Color==0 {
-				bcol = BLACK_PIECE_COLOR
-			}
-			style.Set("background-color",bcol)
-			piecediv.Set("style",style.Report())			
-			pieceletterdiv := CreateDiv()
-			style = NewStyle("position:absolute;")
-			style.Set("left",Scaledpx(SQUARE_PADDING))
-			style.Set("top",Scaledpx(SQUARE_PADDING / PIECE_TOP_FACTOR))
-			pieceletterdiv.Set("style",style.Report())
-			pieceletterdiv.Set("innerHTML",p.Kind)
-			piecediv.Call("appendChild",pieceletterdiv)
+			style.Set("opacity",PIECE_OPACITIES[p.Color])
+			fillcol := PIECE_FILL_COLORS[p.Color]
+			strokecol := PIECE_STROKE_COLORS[p.Color]
+			svg := pieces[p.Kind]			
+			svgc := strings.Replace(svg,"fill=\"#101010\"","fill=\""+fillcol+"\"",-1)
+			svgc = strings.Replace(svgc,"fill:#ececec","fill:"+strokecol,-1)
+			svgc = strings.Replace(svgc,"stroke:#101010","stroke:"+fillcol,-1)
+			piecediv.Set("innerHTML",svgc)
+			piecediv.Set("style",style.Report())
 			if p.Kind!="-" {
 				div.Call("appendChild",piecediv)
 			}
 		}
 	}
-	return div
+	containerdiv.Call("appendChild",div)
+	return containerdiv
 }
 
 func CreateButton(caption string,handler func(*js.Object)) *js.Object {
@@ -358,9 +380,7 @@ func DrawBoard() {
 
 	board := rb.Js()
 
-	Root().Set("style","padding:30px;")
-	
-	Root().Call("appendChild",board)
+	Root().Set("style","padding:30px;")	
 
 	controlsdiv := CreateDiv("controls")
 
@@ -368,13 +388,23 @@ func DrawBoard() {
 
 	resetbutton := CreateButton("Reset",ResetButtonHandler)
 
+	growbutton := CreateButton("+",GrowButtonHandler)
+
+	shrinkbutton := CreateButton("-",ShrinkButtonHandler)
+
 	controlsdiv.Call("appendChild",flipbutton)
 	controlsdiv.Call("appendChild",resetbutton)
+	controlsdiv.Call("appendChild",growbutton)
+	controlsdiv.Call("appendChild",shrinkbutton)
+
+	Root().Call("appendChild",board)
 
 	Root().Call("appendChild",controlsdiv)
 }
 
 func main() {
+
+	DocumentElement().Set("style","background-color:#afafaf;")
 
 	rb = NewRawBoard()
 	rb.SetFromStartrawfen()
