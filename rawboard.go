@@ -51,7 +51,9 @@ func NewRawBoard(setvariant ...string) *RawBoard{
 	}
 	vp := VARIANT_PROPERTIES[rb.Variant]
 	rb.Numfiles = vp.Numfiles
+	rb.Lastfile = vp.Numfiles - 1
 	rb.Numranks = vp.Numranks
+	rb.Lastrank = vp.Numranks - 1
 	rb.Area = rb.Numfiles * rb.Numranks
 	rb.Rep = make ( []Piece , rb.Area )
 	return &rb

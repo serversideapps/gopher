@@ -22,6 +22,8 @@ const(
 var(
 	scalefactor		float64		=	1.0
 
+	flip 			int 		=	0
+
 	rb 				*RawBoard
 
 	HALF_SQUARE_SIZE 	float64		=	SQUARE_SIZE / 2.0
@@ -40,6 +42,11 @@ var(
 
 func Root() *js.Object {
 	return Dgebid("root")
+}
+
+func IdPart(id string, i int) string {
+	parts := strings.Split(id,"_")
+	return parts[i]
 }
 
 type ScreenVector	struct {
@@ -194,9 +201,25 @@ func PieceDragStartHandler(event *js.Object) {
 func BoardMouseUpHandler(event *js.Object) {			
 	dragunderway = false	
 
-	sq := rb.ScaledScreenVectorToSquare(dragd.Correct(HALF_SQUARE_SIZE_SCREENVECTOR.Scaled()))
+	dsq := rb.ScaledScreenVectorToSquare(dragd.Correct(HALF_SQUARE_SIZE_SCREENVECTOR.Scaled()))
 
-	dsv := rb.SquareToScaledScreenVector(sq)
+	fromalgeb := IdPart(draggedid, 1)
+
+	fromsqorig := rb.Rot(SquareFromAlgeb(fromalgeb),flip)
+
+	tosq := rb.Rot(fromsqorig.Plus(dsq),-flip)
+
+	toalgeb := tosq.Toalgeb()
+
+	algeb := fromalgeb + toalgeb
+
+	m := MoveFromAlgeb(algeb)
+
+	rb.MakeMove(m)
+
+	println(m.Toalgeb())
+
+	dsv := rb.SquareToScaledScreenVector(dsq)
 
 	nsv := dragstartst.Plus(dsv)
 
@@ -205,6 +228,8 @@ func BoardMouseUpHandler(event *js.Object) {
 	st.SetTopLeft(nsv)
 
 	SetStyleOfId(draggedid,*st)
+
+	DrawBoard()
 }
 
 func BoardMouseMoveHandler(event *js.Object) {		
@@ -221,6 +246,19 @@ func BoardMouseMoveHandler(event *js.Object) {
 
 		SetStyleOfId(draggedid,*st)
 	}
+}
+
+func FlipButtonHandler(event *js.Object) {			
+	flip += 1
+	if flip >3 {
+		flip = 0
+	}	
+	DrawBoard()
+}
+
+func ResetButtonHandler(event *js.Object) {			
+	rb.SetFromStartrawfen()
+	DrawBoard()
 }
 
 func (rb RawBoard) ScreenVectorToSquare(sv ScreenVector) Square {
@@ -244,19 +282,26 @@ func (rb RawBoard) SquareToScaledScreenVector(sq Square) ScreenVector {
 }
 
 func (rb RawBoard) Js() *js.Object {
-	div := CreateDiv("board")
+	div := CreateDiv("board")	
 	div.Call("addEventListener", "mouseup", BoardMouseUpHandler)
 	div.Call("addEventListener", "mousemove", BoardMouseMoveHandler)
-	div.Set("style","position:absolute;")
-	for f := 0 ; f < rb.Numfiles ; f++ {
-		for r := 0 ; r < rb.Numranks ; r++ {
-			algeb := SquareFromFileRank(f,r).Toalgeb()
-			squarediv := CreateDiv("square_" + algeb)			
-			style := NewStyle("position:absolute;")
-			bcol := LIGHT_SQUARE_COLOR
-			if ((r+f)%2)==0 {
+	st := NewStyle("position:relative; background-color: #00ff00;")
+	st.Set("width",Scaledpx(float64(rb.Numfiles)*SQUARE_SIZE))
+	st.Set("height",Scaledpx(float64(rb.Numranks)*SQUARE_SIZE))
+	div.Set("style",st.Report())
+	for nf := 0 ; nf < rb.Numfiles ; nf++ {
+		for nr := 0 ; nr < rb.Numranks ; nr++ {
+			bcol := LIGHT_SQUARE_COLOR			
+			if ((nr+nf)%2)==0 {
 				bcol = DARK_SQUARE_COLOR			
 			}			
+			sq := SquareFromFileRank(nf,nr)
+			algeb := sq.Toalgeb()
+			rotsq := rb.Rot(sq,flip)
+			f := rotsq.File
+			r := rotsq.Rank
+			squarediv := CreateDiv("square_" + algeb)			
+			style := NewStyle("position:absolute;")			
 			style.Set("z-index",SQUARE_Z_INDEX)
 			style.Set("width",Scaledpx(SQUARE_SIZE))
 			style.Set("height",Scaledpx(SQUARE_SIZE))
@@ -276,7 +321,7 @@ func (rb RawBoard) Js() *js.Object {
 			style.Set("top",Scaledpx(float64(r)*SQUARE_SIZE+SQUARE_PADDING))
 			style.Set("left",Scaledpx(float64(f)*SQUARE_SIZE+SQUARE_PADDING))
 			bcol = WHITE_PIECE_COLOR
-			p := rb.PieceAtFileRank(f,r)
+			p := rb.PieceAtFileRank(nf,nr)
 			if p.Color==0 {
 				bcol = BLACK_PIECE_COLOR
 			}
@@ -297,15 +342,42 @@ func (rb RawBoard) Js() *js.Object {
 	return div
 }
 
-func main() {
+func CreateButton(caption string,handler func(*js.Object)) *js.Object {
+	button := Document().Call("createElement","input")
 
-	rb = NewRawBoard()
-	rb.SetFromStartrawfen()
-	
+	button.Set("type","button")
+	button.Set("value",caption)
+
+	button.Call("addEventListener","mousedown",handler)			
+
+	return button
+}
+
+func DrawBoard() {	
+	Root().Set("innerHTML","")
+
 	board := rb.Js()
 
 	Root().Set("style","padding:30px;")
 	
 	Root().Call("appendChild",board)
 
+	controlsdiv := CreateDiv("controls")
+
+	flipbutton := CreateButton("Flip",FlipButtonHandler)
+
+	resetbutton := CreateButton("Reset",ResetButtonHandler)
+
+	controlsdiv.Call("appendChild",flipbutton)
+	controlsdiv.Call("appendChild",resetbutton)
+
+	Root().Call("appendChild",controlsdiv)
+}
+
+func main() {
+
+	rb = NewRawBoard()
+	rb.SetFromStartrawfen()
+
+	DrawBoard()
 }
