@@ -1,0 +1,2 @@
+gopherjs build -m
+dir

@@ -3,7 +3,147 @@ package main
 import(
 	"github.com/gopherjs/gopherjs/js"
 	"strconv"
+	"strings"
 )
+
+const(
+	SQUARE_SIZE			float64		=	50.0
+	SQUARE_PADDING		float64		=	10.0	
+	PIECE_FONT_FACTOR	float64		=	1.5
+	PIECE_TOP_FACTOR	float64		=	3.0
+	WHITE_PIECE_COLOR 	string 		=	"#00ff00"
+	BLACK_PIECE_COLOR	string 		=	"#ff0000"
+	LIGHT_SQUARE_COLOR	string 		=	"#afafaf"
+	DARK_SQUARE_COLOR	string 		=	"#dfdfdf"
+	SQUARE_Z_INDEX		string 		=	"100"
+	PIECE_Z_INDEX		string 		=	"200"
+)
+
+var(
+	scalefactor		float64		=	1.0
+
+	rb 				*RawBoard
+
+	HALF_SQUARE_SIZE 	float64		=	SQUARE_SIZE / 2.0
+
+	PIECE_SIZE			float64		=	SQUARE_SIZE - 2.0 * SQUARE_PADDING
+
+	dragstart		ScreenVector
+	dragstartst		ScreenVector
+	dragd			ScreenVector
+	
+	dragunderway	bool
+	draggedid		string	
+
+	HALF_SQUARE_SIZE_SCREENVECTOR	ScreenVector 	=	ScreenVector{HALF_SQUARE_SIZE,HALF_SQUARE_SIZE}
+)
+
+func Root() *js.Object {
+	return Dgebid("root")
+}
+
+type ScreenVector	struct {
+	X 	float64
+	Y 	float64
+}
+
+func (sv1 ScreenVector) Plus(sv2 ScreenVector) ScreenVector {
+	return ScreenVector{sv1.X + sv2.X,sv1.Y + sv2.Y}
+}
+
+func (sv1 ScreenVector) Minus(sv2 ScreenVector) ScreenVector {
+	return ScreenVector{sv1.X - sv2.X,sv1.Y - sv2.Y}
+}
+
+func (sv1 ScreenVector) Correct(sv2 ScreenVector) ScreenVector {
+	x := sv1.X + sv2.X
+	y := sv1.Y + sv2.Y
+	if sv1.X < 0 {
+		x = sv1.X - sv2.X
+	}
+	if sv1.Y < 0 {
+		y = sv1.Y - sv2.Y
+	}
+	return ScreenVector{x,y}
+}
+
+func (sv ScreenVector) Scaled() ScreenVector {
+	return ScreenVector{sv.X * scalefactor,sv.Y * scalefactor}
+}
+
+func (sv ScreenVector) Unscaled() ScreenVector {
+	return ScreenVector{sv.X / scalefactor,sv.Y / scalefactor}
+}
+
+type Style 		struct {
+	Init 			string
+	Properties		map[string]string
+}
+
+func (st Style) GetProperty(property string) string {
+	return st.Properties[property]
+}
+
+func (st Style) GetFloat(property string) float64 {
+	f , _ := strconv.ParseFloat(st.GetProperty(property),64)
+	return f
+}
+
+func (st Style) GetPx(property string) float64 {
+	f , _ := strconv.ParseFloat(strings.Replace(st.GetProperty(property),"px","",-1),64)
+	return f
+}
+
+func NewStyle(init ...string) *Style {	
+	st := Style{}
+	properties := make( map[string]string )
+	if len(init) > 0 {
+		parts := strings.Split(init[0],";")
+		for _ , part := range parts {
+			partnospace := strings.Replace(part," ","",-1)
+			subparts := strings.Split(partnospace,":")
+			if len(subparts) == 2 {
+				property := subparts[0]
+				value := subparts[1]
+				properties[property] = value
+			}
+		}
+	}		
+	st.Properties = properties
+	return &st
+}
+
+func NewStyleFromId(id string) *Style {
+	e := Dgebid(id)
+	style := e.Get("style").Get("cssText").String()
+	return NewStyle(style)
+}
+
+func SetStyleOfId(id string, st Style) {
+	Dgebid(id).Set("style",st.Report())
+}
+
+func (st *Style) Set(property string, value string) {
+	st.Properties[property] = value
+}
+
+func (st *Style) SetPx(property string, value float64) {
+	st.Properties[property] = strconv.FormatFloat(value, 'g', -1, 64) + "px"
+}
+
+func (st *Style) SetTopLeft(sv ScreenVector) {
+	st.SetPx("top",sv.Y)
+	st.SetPx("left",sv.X)
+}
+
+func (st Style) Report() string {
+	ps := make( []string , 0 )
+	ps = append(ps, st.Init)
+	for pr , v := range st.Properties {
+		ps = append(ps, pr + ": " + v + ";")
+	}
+	return strings.Join(ps," ")
+}
 
 func Document() *js.Object {
 	return js.Global.Get("document")
@@ -17,39 +157,136 @@ func CreateElement(kind string) *js.Object {
 	return Document().Call("createElement",kind)
 }
 
-func CreateDiv() *js.Object {
-	return CreateElement("div")
+func CreateDiv(id ...string) *js.Object {
+	e := CreateElement("div")
+	if len(id) > 0 {
+		e.Set("id",id[0])
+	}
+	return e
 }
 
-func (rb RawBoard) RawBoardDiv() *js.Object {
-	div := CreateDiv()
-	div.Set("style","position:absolute;top:20px;left:20px;")
+func Dgebid(id string) *js.Object {
+	return Document().Call("getElementById",id)
+}
+
+func Scaled(coord float64) float64 {
+	return coord * scalefactor
+}
+
+func Px(coord float64) string {
+	return strconv.Itoa(int(coord))+"px;"
+}
+
+func Scaledpx(coord float64) string {
+	return Px(Scaled(coord))
+}
+
+func PieceDragStartHandler(event *js.Object) {	
+	event.Call("preventDefault")
+	target := event.Get("target")		
+	dragstart = ScreenVector{event.Get("clientX").Float(),event.Get("clientY").Float()}
+	draggedid = target.Get("id").String()		
+	st := NewStyleFromId(draggedid)
+	dragstartst = ScreenVector{st.GetPx("left"),st.GetPx("top")}
+	dragunderway = true
+}
+
+func BoardMouseUpHandler(event *js.Object) {			
+	dragunderway = false	
+
+	sq := rb.ScaledScreenVectorToSquare(dragd.Correct(HALF_SQUARE_SIZE_SCREENVECTOR.Scaled()))
+
+	dsv := rb.SquareToScaledScreenVector(sq)
+
+	nsv := dragstartst.Plus(dsv)
+
+	st := NewStyleFromId(draggedid)
+
+	st.SetTopLeft(nsv)
+
+	SetStyleOfId(draggedid,*st)
+}
+
+func BoardMouseMoveHandler(event *js.Object) {		
+	if dragunderway {
+		client := ScreenVector{event.Get("clientX").Float(),event.Get("clientY").Float()}		
+
+		dragd = client.Minus(dragstart)
+
+		st := NewStyleFromId(draggedid)		
+
+		nsv := dragstartst.Plus(dragd)
+
+		st.SetTopLeft(nsv)
+
+		SetStyleOfId(draggedid,*st)
+	}
+}
+
+func (rb RawBoard) ScreenVectorToSquare(sv ScreenVector) Square {
+	f := int(sv.X / SQUARE_SIZE)
+	r := int(sv.Y / SQUARE_SIZE)
+	return SquareFromFileRank(f,r)
+}
+
+func (rb RawBoard) ScaledScreenVectorToSquare(sv ScreenVector) Square {
+	return rb.ScreenVectorToSquare(sv.Unscaled())
+}
+
+func (rb RawBoard) SquareToScreenVector(sq Square) ScreenVector {
+	x := float64(sq.File) * SQUARE_SIZE
+	y := float64(sq.Rank) * SQUARE_SIZE
+	return ScreenVector{x,y}
+}
+
+func (rb RawBoard) SquareToScaledScreenVector(sq Square) ScreenVector {	
+	return rb.SquareToScreenVector(sq).Scaled()
+}
+
+func (rb RawBoard) Js() *js.Object {
+	div := CreateDiv("board")
+	div.Call("addEventListener", "mouseup", BoardMouseUpHandler)
+	div.Call("addEventListener", "mousemove", BoardMouseMoveHandler)
+	div.Set("style","position:absolute;")
 	for f := 0 ; f < rb.Numfiles ; f++ {
 		for r := 0 ; r < rb.Numranks ; r++ {
-			squarediv := CreateDiv()			
-			style := "width:50px;height:50px;position:absolute;z-index:100;"
-			bcol := "#afafaf"
+			algeb := SquareFromFileRank(f,r).Toalgeb()
+			squarediv := CreateDiv("square_" + algeb)			
+			style := NewStyle("position:absolute;")
+			bcol := LIGHT_SQUARE_COLOR
 			if ((r+f)%2)==0 {
-				bcol = "#dfdfdf"
+				bcol = DARK_SQUARE_COLOR			
 			}			
-			style += "background-color:"+bcol+";"
-			style += "top: " + strconv.Itoa(r*50) + "px;"
-			style += "left: " + strconv.Itoa(f*50) + "px;"			
-			squarediv.Set("style",style)
+			style.Set("z-index",SQUARE_Z_INDEX)
+			style.Set("width",Scaledpx(SQUARE_SIZE))
+			style.Set("height",Scaledpx(SQUARE_SIZE))
+			style.Set("background-color",bcol)
+			style.Set("top",Scaledpx(float64(r)*SQUARE_SIZE))
+			style.Set("left",Scaledpx(float64(f)*SQUARE_SIZE))
+			squarediv.Set("style",style.Report())
 			div.Call("appendChild",squarediv)
-			piecediv := CreateDiv()
-			style = "font-size:20px;width:30px;height:30px;position:absolute;z-index:200;"
-			style += "top: " + strconv.Itoa(r*50+10) + "px;"
-			style += "left: " + strconv.Itoa(f*50+10) + "px;"
-			bcol = "#00ff00"
+			piecediv := CreateDiv("piece_" + algeb)
+			piecediv.Set("draggable","true")
+			piecediv.Call("addEventListener","dragstart",PieceDragStartHandler)			
+			style = NewStyle("position:absolute;")			
+			style.Set("z-index",PIECE_Z_INDEX)
+			style.Set("font-size",Scaledpx(PIECE_SIZE / PIECE_FONT_FACTOR))
+			style.Set("width",Scaledpx(PIECE_SIZE))
+			style.Set("height",Scaledpx(PIECE_SIZE))
+			style.Set("top",Scaledpx(float64(r)*SQUARE_SIZE+SQUARE_PADDING))
+			style.Set("left",Scaledpx(float64(f)*SQUARE_SIZE+SQUARE_PADDING))
+			bcol = WHITE_PIECE_COLOR
 			p := rb.PieceAtFileRank(f,r)
 			if p.Color==0 {
-				bcol = "#ff0000"
+				bcol = BLACK_PIECE_COLOR
 			}
-			style += "background-color:"+bcol+";"
-			piecediv.Set("style",style)			
+			style.Set("background-color",bcol)
+			piecediv.Set("style",style.Report())			
 			pieceletterdiv := CreateDiv()
-			pieceletterdiv.Set("style","position:absolute;left:10px;")
+			style = NewStyle("position:absolute;")
+			style.Set("left",Scaledpx(SQUARE_PADDING))
+			style.Set("top",Scaledpx(SQUARE_PADDING / PIECE_TOP_FACTOR))
+			pieceletterdiv.Set("style",style.Report())
 			pieceletterdiv.Set("innerHTML",p.Kind)
 			piecediv.Call("appendChild",pieceletterdiv)
 			if p.Kind!="-" {
@@ -62,10 +299,13 @@ func (rb RawBoard) RawBoardDiv() *js.Object {
 
 func main() {
 
-	rb := NewRawBoard()
+	rb = NewRawBoard()
 	rb.SetFromStartrawfen()
 	
-	div := rb.RawBoardDiv()
-	DocumentElement().Call("appendChild",div)
+	board := rb.Js()
+
+	Root().Set("style","padding:30px;")
+	
+	Root().Call("appendChild",board)
 
 }
