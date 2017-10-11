@@ -11,8 +11,8 @@ const(
 	SQUARE_PADDING				float64		=	4.0	
 	PIECE_FONT_FACTOR			float64		=	1.5
 	PIECE_TOP_FACTOR			float64		=	3.0	
-	LIGHT_SQUARE_COLOR			string 		=	"#ffffff"
-	DARK_SQUARE_COLOR			string 		=	"#bfbfbf"
+	LIGHT_SQUARE_COLOR			string 		=	"#efefef"
+	DARK_SQUARE_COLOR			string 		=	"#7f7f7f"
 	SQUARE_Z_INDEX				string 		=	"100"
 	PIECE_Z_INDEX				string 		=	"200"
 	SQUARE_OPACITY				string 		=	"0.2"
@@ -20,7 +20,9 @@ const(
 )
 
 var(
-	scalefactor		float64		=	1.2
+	scalefactor		float64		=	0.8
+
+	variant 		string 		=	DEFAULT_VARIANT
 
 	flip 			int 		=	0
 
@@ -39,13 +41,43 @@ var(
 
 	HALF_SQUARE_SIZE_SCREENVECTOR	ScreenVector 	=	ScreenVector{HALF_SQUARE_SIZE,HALF_SQUARE_SIZE}
 
-	PIECE_OPACITIES 		[2]string 	=	[2]string{"1.0","0.7"}
-	PIECE_FILL_COLORS	 	[2]string 	=	[2]string{"#000000","#ffffff"}
-	PIECE_STROKE_COLORS 	[2]string 	=	[2]string{"#ffffff","#afafaf"}
+	PIECE_OPACITIES 		[4]string 	=	[4]string{"1.0","0.7","1.0","1.0"}
+	PIECE_FILL_COLORS	 	[4]string 	=	[4]string{"#000000","#ffffff","#ffff00","#ff0000"}
+	PIECE_STROKE_COLORS 	[4]string 	=	[4]string{"#ffffff","#afafaf","#afafaf","#afafaf"}
 )
+
+func TotalBoardSize(numranks int) float64 {
+	return float64(numranks) * SQUARE_SIZE + 2.0 * BOARD_MARGIN
+}
+
+func Scalefactor() float64 {
+	return scalefactor * TotalBoardSize(14) / TotalBoardSize(rb.Numranks)
+}
 
 func Root() *js.Object {
 	return Dgebid("root")
+}
+
+type Combo struct {
+	Selected	string
+	Options		map[string]string
+}
+
+func CreateCombo(c Combo, handler func(*js.Object)) *js.Object {
+	sel := Document().Call("createElement","select")
+	for k , v := range c.Options {
+		opt := Document().Call("createElement","option")
+		opt.Set("id",k)
+		opt.Set("name",k)
+		opt.Set("value",k)
+		opt.Set("innerHTML",v)
+		if v == c.Selected {
+			opt.Set("selected","true")
+		}
+		sel.Call("appendChild",opt)
+	}
+	sel.Call("addEventListener", "change", handler)
+	return sel
 }
 
 func IdPart(id string, i int) string {
@@ -79,11 +111,11 @@ func (sv1 ScreenVector) Correct(sv2 ScreenVector) ScreenVector {
 }
 
 func (sv ScreenVector) Scaled() ScreenVector {
-	return ScreenVector{sv.X * scalefactor,sv.Y * scalefactor}
+	return ScreenVector{sv.X * Scalefactor(),sv.Y * Scalefactor()}
 }
 
 func (sv ScreenVector) Unscaled() ScreenVector {
-	return ScreenVector{sv.X / scalefactor,sv.Y / scalefactor}
+	return ScreenVector{sv.X / Scalefactor(),sv.Y / Scalefactor()}
 }
 
 type Style 		struct {
@@ -181,7 +213,7 @@ func Dgebid(id string) *js.Object {
 }
 
 func Scaled(coord float64) float64 {
-	return coord * scalefactor
+	return coord * Scalefactor()
 }
 
 func Px(coord float64) string {
@@ -210,15 +242,15 @@ func BoardMouseUpHandler(event *js.Object) {
 
 		fromalgeb := IdPart(draggedid, 1)
 
-		fromsqorig := rb.Rot(SquareFromAlgeb(fromalgeb),flip)
+		fromsqorig := rb.Rot(rb.SquareFromAlgeb(fromalgeb),flip)
 
 		tosq := rb.Rot(fromsqorig.Plus(dsq),-flip)
 
-		toalgeb := tosq.Toalgeb()
+		toalgeb := rb.SquareToAlgeb(tosq)
 
 		algeb := fromalgeb + toalgeb
 
-		m := MoveFromAlgeb(algeb)
+		m := rb.MoveFromAlgeb(algeb)
 
 		rb.MakeMove(m)
 
@@ -250,6 +282,15 @@ func BoardMouseMoveHandler(event *js.Object) {
 
 		SetStyleOfId(draggedid,*st)
 	}
+}
+
+func VariantComboHandler(event *js.Object) {			
+	target := event.Get("target")
+	key := target.Get("selectedOptions").Get("0").Get("value").String()
+	variant , _ = SUPPORTED_VARIANT_KEYS[key]
+	rb = NewRawBoard(variant)
+	rb.SetFromStartrawfen()
+	DrawBoard()
 }
 
 func FlipButtonHandler(event *js.Object) {			
@@ -318,7 +359,7 @@ func (rb RawBoard) Js() *js.Object {
 				bcol = DARK_SQUARE_COLOR			
 			}			
 			sq := SquareFromFileRank(nf,nr)
-			algeb := sq.Toalgeb()
+			algeb := rb.SquareToAlgeb(sq)
 			rotsq := rb.Rot(sq,flip)
 			f := rotsq.File
 			r := rotsq.Rank
@@ -333,7 +374,10 @@ func (rb RawBoard) Js() *js.Object {
 			style.Set("top",Scaledpx(float64(r)*SQUARE_SIZE))
 			style.Set("left",Scaledpx(float64(f)*SQUARE_SIZE))
 			squarediv.Set("style",style.Report())
-			div.Call("appendChild",squarediv)
+
+			if rb.IsSquareValid(sq) {
+				div.Call("appendChild",squarediv)
+			}
 
 			p := rb.PieceAtFileRank(nf,nr)
 			piecediv := CreateDiv("piece_" + algeb)
@@ -384,6 +428,8 @@ func DrawBoard() {
 
 	controlsdiv := CreateDiv("controls")
 
+	variantcombo := CreateCombo(Combo{variant,SUPPORTED_VARIANT_KEYS},VariantComboHandler)
+
 	flipbutton := CreateButton("Flip",FlipButtonHandler)
 
 	resetbutton := CreateButton("Reset",ResetButtonHandler)
@@ -392,6 +438,7 @@ func DrawBoard() {
 
 	shrinkbutton := CreateButton("-",ShrinkButtonHandler)
 
+	controlsdiv.Call("appendChild",variantcombo)
 	controlsdiv.Call("appendChild",flipbutton)
 	controlsdiv.Call("appendChild",resetbutton)
 	controlsdiv.Call("appendChild",growbutton)
@@ -406,7 +453,7 @@ func main() {
 
 	DocumentElement().Set("style","background-color:#afafaf;")
 
-	rb = NewRawBoard()
+	rb = NewRawBoard(variant)
 	rb.SetFromStartrawfen()
 
 	DrawBoard()
